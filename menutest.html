@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+
+<script src="menu.js"></script>
+<script>
+
+var canvas, context;
+var mx, my;
+var menu;
+
+function mouse_move(e) {
+    mx = e.offsetX;
+    my = e.offsetY;  
+};
+
+function mouse_down(e) {
+    mouse_move(e);
+    
+    if (menu) menu.mouse_down(mx, my);   
+}
+
+function loop() {
+    draw();
+}
+
+function draw() {
+    if (menu) {
+        menu.draw(context);   
+    }
+}
+
+window.onload = function() {
+    canvas = document.getElementById("canvas");
+    context = canvas.getContext("2d");
+    canvas.onmousemove = mouse_move;
+    canvas.onmousedown = mouse_down;
+    
+    menu = new Menu(100, 100, 200, 100);
+    
+    var actbutton = new Button("Act", function() {
+        console.log("act"); 
+    });
+    
+    var movebutton = new Button("Move", function() {
+        console.log("move");
+    });
+    
+    menu.add(movebutton);
+    menu.add(actbutton);
+    
+    window.setInterval(loop, 1000/30);
+};
+    
+</script>
+
+</head>
+
+<body>
+
+<canvas id="canvas" width="256" height="256"></canvas>
+    
+</body>
+    
+</html>

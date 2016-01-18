@@ -1,0 +1,501 @@
+<!doctype html>
+<html>
+<head>
+<script>
+
+var canvas, context;
+var tile;
+var units, selunit, activeunit;
+var offsetx, offsety;
+var mx, my, mstartx, mstarty, mousepressed, tilex, tiley, hovertile, seltile;
+var turn, mode, movelist, path, rangelist, spreadlist, target;
+
+var tiletypes = {
+	"grass": {
+		"color": [50, 200, 75],
+		"blocked": false
+	},
+	"water": {
+		"color": [0, 0, 200],
+		"blocked": true
+	},
+	"tree": {
+		"color": [0, 100, 0],
+		"blocked": true
+	},
+	"mountain": {
+		"color": [100, 100, 100],
+		"blocked": true
+	}
+}
+
+function add_noise(val, range) {
+	val = val + Math.floor(Math.random() * range) - Math.floor(Math.random() * range);
+	if (val < 0) val = 0;
+	if (val > 255) val = 255;
+	return val;
+}
+
+function make_pretty(colorarr, range) {
+	var r = add_noise(colorarr[0], range);
+	var g = add_noise(colorarr[1], range);
+	var b = add_noise(colorarr[2], range);
+	return "rgb(" + r + "," + g + "," + b + ")";
+}
+
+var Tile = function(type, range) {
+	this.type = type;
+	this.color = make_pretty(tiletypes[type]["color"], range);
+	this.blocked = tiletypes[type]["blocked"];
+};
+
+function load_tiles() {
+    tile = [];
+    for (var x=0; x<16; x++) {
+        tile[x] = [];
+        for (var y=0; y<16; y++) {
+            tile[x][y] = new Tile("grass", 30);
+        }   
+    }
+}
+
+var skilltypes = {
+    "fight": {
+        "range": 1,
+        "spread": [[0,0]],
+        "min": 10,
+        "max": 15
+    },
+    "arrow": {
+        "range": 5,
+        "spread": [[0,0]],
+        "min": 5,
+        "max": 10
+    },
+    "fire": {
+        "range": 3,
+        "spread": [[-1,0],[1,0],[0,0],[0,-1],[0,1]],
+        "min": 15,
+        "max": 20
+    },
+    "heal": {
+        "range": 3,
+        "spread": [[-1,0],[1,0],[0,0],[0,-1],[0,1]],
+        "min": -15,
+        "max": 20   
+    }
+};
+
+var unittypes = {
+    "soldier": {
+        "sprite": 9817,
+        "maxhp": 50,
+        "agl": 3,
+        "moves": 3,
+        "melee": "fight",
+        "skill": null
+    },
+    "archer": {
+        "sprite": 9823,
+        "maxhp": 40,
+        "agl": 5,
+        "moves": 4,
+        "melee": "arrow",
+        "skill": "arrow"
+    },
+    "mage": {
+        "sprite": 9821,
+        "maxhp": 30,
+        "agl": 2,
+        "moves": 3,
+        "melee": "fight",
+        "skill": "fire"
+    },
+    "healer": {
+        "sprite": 9815,
+        "maxhp": 30,
+        "agl": 2,
+        "moves": 3,
+        "melee": "fight",
+        "skill": "heal"
+    }
+};
+
+var Unit = function(team, type, color, x, y) {
+    this.team = team;
+    this.type = type;
+    this.color = color;
+    this.sprite = String.fromCharCode(unittypes[type].sprite);
+    this.maxhp = unittypes[type].maxhp;
+    this.hp = this.maxhp;
+    this.agl = unittypes[type].agl;
+    this.moves = unittypes[type].moves;
+    this.melee = skilltypes[unittypes[type].melee];
+    this.skill = skilltypes[unittypes[type].skill];
+    this.x = x;
+    this.y = y;
+    this.at = Math.floor(Math.random() * 100);
+};
+
+Unit.prototype.draw = function(ctx) {
+    var dx = this.x * 32 - 4 + offsetx;
+    var dy = this.y * 32 - 16 + offsety;
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = "rgb(0,0,0)";
+    ctx.lineWidth = 2;
+    ctx.font = "40px Arial";
+    ctx.strokeText(this.sprite, dx, dy); 
+    ctx.fillText(this.sprite, dx, dy);   
+};
+
+Unit.prototype.move = function(x, y) {
+    this.x = x;
+    this.y = y;
+};
+
+Unit.prototype.action = function() {
+    console.log("Action", target);
+};
+
+function select_unit(text) {
+    var unit = units.filter(function(u) {
+        return u.x == hovertile.x && u.y == hovertile.y; 
+    })[0];
+    console.log(text, unit);
+    return unit;
+}
+
+function get_next_turn() {
+    var templist = [];
+    templist = units.filter(function(u) {
+        return u.hp > 0; 
+    });
+    
+    while (templist.length > 0 && !activeunit) {
+        //filter units by AT >= 100 and sort by AT then get highest AT
+        activeunit = templist.filter(function(t) {
+            return t.at >= 100;
+        }).sort(function(a, b) {
+            return a.at - b.at;
+        })[0];
+        
+        //if no AT is >= 100, increase AT for all units
+        if (!activeunit) {
+            templist.forEach(function(t) {
+                t.at += t.agl;
+            });
+        }
+    }
+}
+
+function create_unit_map(width, height) {
+    var umap = [];
+    for (var x=0; x < width; x++) {
+        umap[x] = [];
+        for (var y=0; y < height; y++)
+            umap[x][y] = null;
+    }
+    
+    units.forEach(function(u) {
+       umap[u.x][u.y] = u; 
+    });
+    
+    return umap;
+}
+
+function create_binary_map(width, height, fn) {
+    var bmap = [];
+    for (var x=0; x < width; x++) {
+        bmap[x] = [];
+        for (var y=0; y < height; y++)
+            bmap[x][y] = fn(x, y);
+    }
+    
+    return bmap;
+}
+
+function create_movelist(unit) {
+    var movelist = [];
+    var xlist = [-1, 0, 1, 0];
+    var ylist = [0, -1, 0, 1];
+    var umap = create_unit_map(16, 16);
+    var bmap = create_binary_map(16, 16, function(x, y) {
+         if (umap[x][y] && umap[x][y].team != unit.team) return 1; //block enemies
+         if (x == unit.x && y == unit.y) return 1; //block self
+         return 0;
+    });
+    
+    var i = 0;
+    
+    movelist.push({"x":unit.x, "y": unit.y, "step": 0, "prev": null, "unit": unit});
+    
+    while (i < movelist.length) {
+        if (movelist[i].step < unit.moves) {
+            for (var j = 0; j < 4; j++) {
+                var newx = movelist[i].x + xlist[j];
+                var newy = movelist[i].y + ylist[j];
+                
+                //stay in bounds
+                if (newx < 0 || newy < 0 || newx >= 16 || newy >= 16) continue;
+                
+                //cannot move on blocked/visited tiles
+                if (bmap[newx][newy]) continue;
+                
+                //cannot move through enemies
+                if (umap[newx][newy] && umap[newx][newy].team != unit.team) continue;
+                
+                //cannot land on friends
+                //if (umap[newx][newy] && movelist[i].step == unit.moves - 1) continue;
+                
+                movelist.push({
+                    "x": newx,
+                    "y": newy,
+                    "step": movelist[i].step + 1,
+                    "prev": movelist[i],
+                    "unit": umap[newx][newy] != null
+                });
+                
+                bmap[newx][newy] = 1; //block visited tile
+            }
+        }
+        i++;
+    }
+    
+    //filter out tiles that contain units
+    movelist = movelist.filter(function(m) {
+        return !m.unit; 
+    });
+
+    return movelist;
+}
+
+function get_path(mlist, x, y) {
+    var path = [];
+    var node = mlist.filter(function(m) {
+        return m.x == x && m.y == y; 
+    })[0];
+    
+    while (node) {
+        path.push(node);
+        node = node.prev;
+    }
+   
+    if (path.length == 0) path = null;
+   
+    return path;   
+}
+
+function create_diamond(radius) {
+    var diamond = [];
+    for (var x=-radius; x <= radius; x++) {
+        for (var y=-radius; y <= radius; y++) {
+             if (Math.abs(x) + Math.abs(y) <= radius)
+                diamond.push({"x": x, "y": y});
+        }   
+    }
+    return diamond;   
+}
+
+function create_rangelist(unit) {
+    var diamond = create_diamond(unit.melee.range);
+    console.log(diamond);
+    var rangelist = [];
+    
+    diamond.forEach(function(d) {
+        rangelist.push({"x": d.x + unit.x, "y": d.y + unit.y});
+    });
+    
+    return rangelist;
+}
+
+function mouse_move(e) {
+    mx = e.offsetX - offsetx;
+    my = e.offsetY - offsety;
+    
+    tilex = Math.floor(mx / 32);
+    tiley = Math.floor(my / 32);
+    
+    if (mousepressed) {
+        offsetx += mx - mstartx;
+        offsety += my - mstarty;
+    }
+    else
+        hovertile = { "x": tilex, "y": tiley};
+}
+
+function mouse_down(e) {
+    mouse_move(e);
+    
+    mstartx = mx;
+    mstarty = my;
+    
+    mousepressed = true;
+}
+
+function mouse_up(e) {
+    if (!selunit) {
+        selunit = select_unit("selunit");
+        if (selunit) movelist = create_movelist(selunit);
+    }
+    else if (movelist && !path) {
+        seltile = hovertile;
+        path = get_path(movelist, seltile.x, seltile.y);
+        if (!path) movelist = null;
+    }
+    else if (path) {
+        if (hovertile.x == seltile.x && hovertile.y == seltile.y) {
+            selunit.move(hovertile.x, hovertile.y);
+            movelist = null;
+            path = null;
+            seltile = null;
+        }
+        else {
+            seltile = hovertile;
+            path = get_path(movelist, seltile.x, seltile.y);
+        }
+    }
+    /*
+    else if (selunit && !rangelist) {
+        rangelist = create_rangelist(selunit);
+    }
+    else if (selunit && !spread) {
+        spreadlist = create_spreadlist(selunit);
+    }
+    else if (selunit && !movelist) {
+        selunit.move(hovertile.x, hovertile.y);
+        movelist = create_movelist(selunit);
+    }
+    */
+    else {
+        movelist = null;
+        rangelist = null;
+        spreadlist = null;
+        target = null;
+    }
+    
+    mousepressed = false;
+}
+
+function loop() {
+    
+    if (activeunit && !selunit) {
+        selunit = activeunit;
+        offsetx = 256 - selunit.x * 32;
+        offsety = 256 - selunit.y * 32;
+    }
+    else if (selunit) {
+        
+    }
+    else
+        get_next_turn();
+    
+    draw();
+}
+
+function draw_tile(x, y, color) {
+    context.fillStyle = color;
+    context.fillRect(x * 32 + offsetx,  y * 32 + offsety, 32, 32);  
+}
+
+function draw_tile_list(tilelist, color) {
+    context.fillStyle = color;
+    tilelist.forEach(function(t) {
+         context.fillRect(t.x * 32 + offsetx, t.y * 32 + offsety, 32, 32); 
+    });
+}
+
+function draw() {
+    context.fillStyle = "rgb(55,55,55)";
+    context.fillRect(0, 0, 640, 480);
+    
+    for (var x=0; x < 16; x++) {
+        for (var y=0; y < 16; y++) {
+            draw_tile(x, y, tile[x][y].color);
+        }
+    }
+    
+    if (selunit) {
+        draw_tile(selunit.x, selunit.y, "rgba(255, 255, 0, 0.75)"); 
+    }
+
+    if (movelist) {
+        draw_tile_list(movelist, "rgba(100, 155, 255, 0.50)");
+    }
+    
+    if (path) {
+        draw_tile_list(path, "rgba(255, 255, 0, 0.50)");  
+    }
+    
+    if (rangelist) {
+        draw_tile_list(rangelist, "rgba(255, 0, 0, 0.75)");
+    }
+    
+    if (spreadlist) {
+        draw_tile_list(spreadlist, "rgba(255, 0, 0, 0.75)");
+    }
+    
+    if (target) {
+        draw_tile(target.x, target.y, "rgba(155, 255, 155, 0.75)"); 
+    }
+    
+    if (hovertile) {
+        context.strokeStyle = "rgb(255,255,255)";
+        context.lineWidth = 2;
+        context.strokeRect(hovertile.x * 32 + offsetx, hovertile.y * 32 + offsety, 32, 32);    
+    }
+    
+    units.forEach(function(u) {
+        u.draw(context);
+    });
+}
+
+window.onload = function() {
+    canvas = document.getElementById("canvas");
+    context = canvas.getContext("2d");
+    context.textBaseline = "top";
+    
+    canvas.onmousemove = mouse_move;
+    canvas.onmousedown = mouse_down;
+    canvas.onmouseup = mouse_up;
+    
+    load_tiles();
+    
+    hovertile = null;
+    
+    units = [];
+    
+    units[0] = new Unit("user", "soldier", "rgb(0,255,0)", 6, 12);
+    units[1] = new Unit("user", "soldier", "rgb(0,255,0)", 7, 12);
+    units[2] = new Unit("user", "archer", "rgb(0,255,0)", 8, 13);
+    units[3] = new Unit("user", "mage", "rgb(0,255,0)", 9, 13);
+    units[4] = new Unit("user", "healer", "rgb(0,255,0)", 10, 13);
+    
+    units[5] = new Unit("cpu", "soldier", "rgb(255,0,0)", 5, 2);
+    units[6] = new Unit("cpu", "soldier", "rgb(255,0,0)", 6, 2);
+    units[7] = new Unit("cpu", "soldier", "rgb(255,0,0)", 7, 2);
+    units[8] = new Unit("cpu", "soldier", "rgb(255,0,0)", 8, 2);
+    units[9] = new Unit("cpu", "soldier", "rgb(255,0,0)", 9, 2);
+    
+    turn = "user";
+    mode = "idle";
+    offsetx = 50;
+    offsety = 50;
+    
+    window.setInterval(loop, 1000/30);
+};
+
+</script>
+</head>
+<body>
+
+<div>
+<canvas id="canvas" width="640" height="480"></canvas>
+</div>
+
+<div>
+<table id="unittable">
+</table>
+</div>
+
+</body>
+</html>
